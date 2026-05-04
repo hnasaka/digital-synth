@@ -32,7 +32,19 @@ module dds_engine_ip2 (
     input logic keyboardSelect,
 
     output logic signed [15:0] pcm_data,
-    output logic               pcm_valid
+    output logic               pcm_valid,
+    
+    
+    //adsr
+    input logic [31:0] attack_step,
+    input logic [31:0] decay_step,
+    input logic [31:0] sustain_level,
+    input logic [31:0] sustain_time,
+    input logic [31:0] release_step,
+    
+    //draw
+    output logic [8:0] drawAddress,
+    input logic [8:0] drawPCM
     
 );
 
@@ -50,6 +62,7 @@ module dds_engine_ip2 (
     logic [9:0] wt_addr;
     logic clearAccum;
     logic accum_done;
+    logic [15:0] adsrEnvelope;
 
     controlDDS u_control (
                     .Clk(clk),
@@ -61,7 +74,9 @@ module dds_engine_ip2 (
                     .wr_addrValid(wr_addrValid),
                     .wt_addr(wt_addr),
                     .clearAccum(clearAccum),
-                    .keyboardSelect(keyboardSelect)
+                    .keyboardSelect(keyboardSelect),
+                    .envelope(adsrEnvelope),
+                    .*
                     
     );
    
@@ -85,15 +100,18 @@ module dds_engine_ip2 (
     // so presets stay in phase with the DDS sine output.
     
     logic [9:0] wt_addr_r;   // registered address, valid during accum
+    logic [15:0] adsrEnvelope_r;
 
     always_ff @(posedge clk) begin
         if (!rst_n)
             wt_addr_r <= '0;
-        else if (wr_addrValid)      // capture at end of note_i
+        else if (wr_addrValid) begin     // capture at end of note_i
             wt_addr_r <= wt_addr;
+            adsrEnvelope_r <= adsrEnvelope;
+            end
     end
 
-    logic signed [15:0] square_raw, saw_raw, noise_raw;
+    logic signed [15:0] square_raw, saw_raw, noise_raw, draw_raw;
     assign square_raw = wt_addr_r[9] ? -16'sd32767 : 16'sd32767;
     assign saw_raw    = signed'(16'({wt_addr_r, 6'b0})) - 16'sd32768;
 
@@ -104,6 +122,9 @@ module dds_engine_ip2 (
             lfsr <= {lfsr[14:0], lfsr[15]^lfsr[14]^lfsr[12]^lfsr[3]};
     end
     assign noise_raw = signed'(lfsr);
+    
+    assign drawAddress = wt_addr_r[9:1];
+    assign draw_raw = ($signed({1'b0, drawPCM}) - 10'sd256) <<< 7;
 
     // ?? Waveform mux ?????????????????????????????????????????????????????
     logic signed [15:0] selected_raw;
@@ -112,20 +133,32 @@ module dds_engine_ip2 (
             2'd0:    selected_raw = sine_raw;     // use DDS IP output
             2'd1:    selected_raw = square_raw;
             2'd2:    selected_raw = saw_raw;
-            2'd3:    selected_raw = noise_raw;
+            2'd3:    selected_raw = draw_raw;
             default: selected_raw = '0;
         endcase
     end
 
     // ?? Amplitude scaling ?????????????????????????????????????????????????
-    logic signed [17:0] acc_sum;
+    // In always_comb - compute ADSR-scaled sample before accumulation
+    logic signed [31:0] adsr_product;
+    logic signed [15:0] adsr_scaled;
     
+    always_comb begin
+        // 16-bit sample × 16-bit ADSR envelope = 32-bit product
+        // Take top 16 bits ? back to 16-bit range
+        adsr_product = signed'(selected_raw) * signed'({1'b0, adsrEnvelope_r});
+        adsr_scaled  = adsr_product[30:15];   // [30:15] not [31:16] - avoids sign bit issue
+    end
+    
+    logic signed [17:0] acc_sum;
     
     always_ff @(posedge clk) begin
         if (clearAccum) begin
             acc_sum <= '0;
         end else if (lutValid) begin
-            acc_sum <= acc_sum + 18'(signed'(selected_raw));
+        //acc_sum <= acc_sum + 18'(signed'(selected_raw));
+//            adsrProduct = signed'(selected_raw) * signed'({1'b0,adsrEnvelope_r});
+            acc_sum <= acc_sum + adsr_scaled;
         end     
     end
     

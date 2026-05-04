@@ -43,12 +43,24 @@ module projectFinalTop(
         
         //UART
         input logic uart_rtl_0_rxd,
-        output logic uart_rtl_0_txd
+        output logic uart_rtl_0_txd,
         
+        //Potentiometer
+        input logic VP,
+        input logic VN,
+        
+        //HDMI
+        output logic        hdmi_tmds_clk_n,
+        output logic        hdmi_tmds_clk_p,
+        output logic [2:0]  hdmi_tmds_data_n,
+        output logic [2:0]  hdmi_tmds_data_p
     );
     
     logic resetn;
     assign resetn = ~BTN[0];
+    
+    logic systemOn;
+    assign systemOn = SW[15];
     
 // Microblaze ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``
     
@@ -68,12 +80,66 @@ module projectFinalTop(
         .usb_spi_sclk(usb_spi_sclk),
         .usb_spi_ss(usb_spi_ss)
     );
+
+//HDMI Screen
+
+logic [8:0] drawAddress;
+logic [8:0] drawPCM;
+
+logic [31:0] mousecode;
+
+always_comb begin
+    mousecode = '0;
+    if(systemOn)begin
+        mousecode = keycode0_gpio;
+    end
+end
+
+mb_usb_hdmi_top screen(
+    .Clk(CLK_100MHZ),
+    .reset_rtl_0(~resetn),
+    .keycode0_gpio(mousecode),
+    .*
+    );
+
+
+//XADC~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~`
+
+logic [11:0] pot_raw;
+logic        pot_valid;
+
+pot_reader u_pot (
+    .clk     (CLK_100MHZ),
+    .rst_n   (resetn),
+    .vp_in   (VP),
+    .vn_in   (VN),
+    .raw_adc (pot_raw),
+    .valid   (pot_valid)
+);
+
+//Potentiometer to set values~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~`
+
+logic [14:0] amplitude;
+logic [1:0] waveformSelect;
+logic keyboardSelect;
+logic [31:0] attack_step;
+logic [31:0] decay_step;
+logic [31:0] sustain_level;
+logic [31:0] sustain_time;
+logic [31:0] release_step;
+ 
+Potentiometer_Control u_pot_control(.clk(CLK_100MHZ),
+                                    .resetn(resetn),
+                                    .systemOn(systemOn),
+                                    .*               
+    );
+
     
-//Keycode HEX drivers ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//HEX drivers ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     hex_driver HexA (
         .clk(CLK_100MHZ),
         .reset(~resetn),
-        .in({keycode0_gpio[31:28], keycode0_gpio[27:24], keycode0_gpio[23:20], keycode0_gpio[19:16]}),
+        .in({4'b0000,pot_raw[11:8],pot_raw[7:4],pot_raw[3:0]}),
         .hex_seg(hex_seg_left),
         .hex_grid(hex_grid_left)
     );
@@ -85,15 +151,6 @@ module projectFinalTop(
         .hex_seg(hex_seg_right),
         .hex_grid(hex_grid_right)
     );
-    
-// Keyboard to Pitch    
-
-//logic [23:0] tuningWord;
-
-//kb2Pitch pitcher(
-//    .keycode(keycode0_gpio[7:0]),
-//    .tuning_word(tuningWord)
-//);
   
 // Tick:~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     
@@ -104,17 +161,13 @@ module projectFinalTop(
         .rst_n (resetn),
         .tick  (tick)
     ); 
-  
-  
     
 // DDS ENGINE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     
     logic dds_pcm_valid;
     logic signed [15:0] dds_pcm_out;
     
-    logic [14:0] amplitude;
-    
-    assign amplitude = 15'(SW[13:10]) * 15'd2048;
+//    assign amplitude = 15'(SW[13:10]) * 15'd2048;
 
     
     dds_engine_ip2 u_dds (
@@ -124,10 +177,11 @@ module projectFinalTop(
 //        .tuning_word  (tuningWord),
         .keyCodes     (keycode0_gpio),
         .amplitude    (amplitude),
-        .waveform_sel (SW[1:0]),
+        .waveform_sel (waveformSelect),
         .pcm_data     (dds_pcm_out),
         .pcm_valid    (dds_pcm_valid),
-        .keyboardSelect (SW[14])
+        .keyboardSelect (keyboardSelect),
+        .*
     );
     
     
@@ -135,20 +189,21 @@ module projectFinalTop(
     
     logic PDM_OUT;
     logic signed [15:0] pcm_data;
-    logic signed [15:0] metaStable;
+//    logic signed [15:0] metaStable;
     
-    always_ff @(CLK_100MHZ) begin
-        for(integer count = 0; count < 16; count = count + 1)
-            metaStable[count] = CLK_100MHZ;
-    end
+//    always_ff @(posedge CLK_100MHZ) begin
+//        for(integer count = 0; count < 16; count = count + 1)
+//            metaStable[count] = CLK_100MHZ;
+//    end
+    
     always_comb begin
         pcm_data = dds_pcm_out;
-        if (~SW[15] || (keycode0_gpio[7:0] == 0)) begin
+        if (!systemOn) begin
             pcm_data = 'h0;
         end 
-        else if (SW[9]) begin
-            pcm_data = dds_pcm_out + metaStable;
-        end
+//        else if (SW[9]) begin
+//            pcm_data = dds_pcm_out + metaStable;
+//        end
     end
     
     pcm_to_pdm2 #(.PCM_WIDTH(16), .CLK_DIV(8)) u_pdm (

@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 
-
+//Source : https://community.element14.com/technologies/fpga-group/b/blog/posts/systemverilog-study-notes-adsr-envelope-generator-for-sound-synthesis
 // fsm to generate ADSR envelop
 
 // start (trigger) signal:
@@ -57,6 +57,7 @@
 input logic clk,
 input logic reset,
 input logic start, // generate a pulse to start the envelope generation
+input logic pressing,
 input logic [31:0] attack_step_value, // precalculated (Amax - 0)/(t_attack - t_sys) steps for the attack segment
 input logic [31:0] decay_step_value,  // precalculated (A_max-A_sus) / (t_decay / t_sys) steps for the decay segment
 input logic [31:0] sustain_level, // amplitude for the sustain segment
@@ -153,7 +154,7 @@ output logic adsr_idle
                 end else begin
                     if(sustain_time_reg < sustain_time) begin
                         sustain_time_next = sustain_time_next + 1;
-                    end else begin
+                    end else if (!pressing) begin
                         state_next = rel;
                     end
                  end
