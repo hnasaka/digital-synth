@@ -65,7 +65,8 @@ module controlDDS #(
 //        end
 //        else if (curr_state == note_i) phase_acc[noteNum] <= phase_acc[noteNum] + currentTuningWord;
 //    end
-    logic clear_phase [voiceNum];  // one per voice slot
+
+    logic adsr_done[voiceNum];
     
     // Voice manager sets clear_phase[i] when adsr_done
     // Phase accumulator block:
@@ -78,8 +79,9 @@ module controlDDS #(
                 phase_acc[noteNum] <= phase_acc[noteNum] + currentTuningWord;
             // Clear takes priority over accumulation
             for (int i = 0; i < voiceNum; i++)
-                if (clear_phase[i])
+                if (adsr_done[i]) begin
                     phase_acc[i] <= '0;
+                end
         end
     end
     
@@ -95,8 +97,6 @@ module controlDDS #(
     );
 //ADSR~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 logic [15:0] adsrEnvelope [voiceNum];
-logic adsr_done[voiceNum];
-logic voicePressed[voiceNum];
 
 genvar i;
 generate
@@ -105,12 +105,12 @@ generate
             .clk(Clk),
             .reset(Reset),
             .start(voicePosedge[i]),
-            .pressing(voicePressed[i]),
+            .pressing(voicePressed_r[i]),
             .envelope(adsrEnvelope[i]),
             .attack_step_value(attack_step),
             .decay_step_value(decay_step),
             .sustain_level(sustain_level),
-            .sustain_time(sustain_step),
+            .sustain_time(sustain_time),
             .release_step_value(release_step),
             .adsr_idle(adsr_done[i])
             
@@ -160,8 +160,24 @@ always_ff @(posedge Clk) begin
             voicePressed_r[i] <= 1'b0;
         end
     end else begin
+        
+        for (int i = 0; i < voiceNum; i++) begin
+            if (voices_r[i] != '0 && !voicePressed_r[i]) begin
+                if (voices_r[i] == keycodes[7:0]   ||
+                    voices_r[i] == keycodes[15:8]  ||
+                    voices_r[i] == keycodes[23:16] ||
+                    voices_r[i] == keycodes[31:24]) begin
+                    // Key re-pressed while still in release
+                    // Setting voicePressed_r high generates a posedge
+                    // which triggers ADSR start - no phase_acc reset needed
+                    voicePressed_r[i] <= 1'b1;
+                end
+            end
+        end
+        
         // Update voice pressed state from keycodes
         for (int i = 0; i < voiceNum; i++) begin
+            
             // Check if this voice's key is still in keycodes
             if (voices_r[i] != '0) begin
                 if (voices_r[i] != keycodes[7:0]   &&
@@ -173,10 +189,10 @@ always_ff @(posedge Clk) begin
                     // Only clear voice when ADSR done
                     if (adsr_done[i])
                         voices_r[i] <= '0;
-                        clear_phase[i] <= '1;
+                        
                 end else begin
                     voicePressed_r[i] <= 1'b1;
-                    clear_phase[i] <= '0;
+                   
                 end
             end
         end
@@ -230,7 +246,6 @@ end
     
 	always_comb
 	begin
-	// Assign outputs based on ‘state’
 	    pcm_valid = '0;
 	    wr_addrValid = '0;
 	    noteNum_next = noteNum;
@@ -285,7 +300,7 @@ end
 	always_comb
 	begin
 
-		next_state  = curr_state;	//required because I haven't enumerated all possibilities below. Synthesis would infer latch without this
+		next_state  = curr_state;	
 		unique case (curr_state) 
 			idle:    
 			begin
@@ -319,7 +334,7 @@ end
 
 
 
-	//updates flip flop, current state is the only one
+	
 	always_ff @(posedge Clk)  
 	begin
 		if (Reset)

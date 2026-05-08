@@ -53,7 +53,14 @@ module projectFinalTop(
         output logic        hdmi_tmds_clk_n,
         output logic        hdmi_tmds_clk_p,
         output logic [2:0]  hdmi_tmds_data_n,
-        output logic [2:0]  hdmi_tmds_data_p
+        output logic [2:0]  hdmi_tmds_data_p,
+        
+        //SD CARD
+       output logic cs_bo, //SD card pins (also make sure to disable USB CS if using DE10-Lite)
+	   output logic sclk_o,
+	   output logic mosi_o,
+	   input  logic miso_i 
+        
     );
     
     logic resetn;
@@ -61,6 +68,12 @@ module projectFinalTop(
     
     logic systemOn;
     assign systemOn = SW[15];
+    
+    logic sdcardOn;
+    assign sdcardOn = SW[14];
+    
+    logic fftSound;
+    assign fftSound = SW[13];
     
 // Microblaze ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``
     
@@ -81,27 +94,33 @@ module projectFinalTop(
         .usb_spi_ss(usb_spi_ss)
     );
 
-//HDMI Screen
+//HDMI Screen ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 logic [8:0] drawAddress;
 logic [8:0] drawPCM;
 
 logic [31:0] mousecode;
 
-always_comb begin
-    mousecode = '0;
-    if(systemOn)begin
-        mousecode = keycode0_gpio;
-    end
-end
+
+
+assign mousecode = !systemOn ? keycode0_gpio : '0;
+
+logic [9:0] fftOutAddress;
+logic signed [15:0] fftOutData;
 
 mb_usb_hdmi_top screen(
     .Clk(CLK_100MHZ),
     .reset_rtl_0(~resetn),
     .keycode0_gpio(mousecode),
+    .fft_trigger(BTN[3]),
+    .hdmi_tmds_clk_n(hdmi_tmds_clk_n),
+    .hdmi_tmds_clk_p(hdmi_tmds_clk_p),
+    .hdmi_tmds_data_n(hdmi_tmds_data_n),
+    .hdmi_tmds_data_p(hdmi_tmds_data_p),
+    .fftOutAddr(fftOutAddress),
+    .fftOutData(fftOutData),
     .*
     );
-
 
 //XADC~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~`
 
@@ -131,6 +150,11 @@ logic [31:0] release_step;
 Potentiometer_Control u_pot_control(.clk(CLK_100MHZ),
                                     .resetn(resetn),
                                     .systemOn(systemOn),
+                                    .attack_step    (attack_step),    // ? was missing
+                                    .decay_step     (decay_step),     // ? was missing
+                                    .sustain_level  (sustain_level),  // ? was missing
+                                    .sustain_time   (sustain_time),   // ? was missing
+                                    .release_step   (release_step),
                                     .*               
     );
 
@@ -147,7 +171,8 @@ Potentiometer_Control u_pot_control(.clk(CLK_100MHZ),
     hex_driver HexB (
         .clk(CLK_100MHZ),
         .reset(~resetn),
-        .in({keycode0_gpio[15:12], keycode0_gpio[11:8], keycode0_gpio[7:4], keycode0_gpio[3:0]}),
+//        .in({keycode0_gpio[15:12], keycode0_gpio[11:8], keycode0_gpio[7:4], keycode0_gpio[3:0]}),
+        .in({pcm_data[15:12],pcm_data[11:8],pcm_data[7:4],pcm_data[3:0]}),
         .hex_seg(hex_seg_right),
         .hex_grid(hex_grid_right)
     );
@@ -155,12 +180,49 @@ Potentiometer_Control u_pot_control(.clk(CLK_100MHZ),
 // Tick:~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     
     logic tick;
+    logic tick441;
+    logic tick20;
     
     audio_tick u_tick (
         .clk   (CLK_100MHZ),
         .rst_n (resetn),
         .tick  (tick)
     ); 
+    
+    audio_tick #(.SAMPLE_HZ(44100)) u_tick441 (
+        .clk   (CLK_100MHZ),
+        .rst_n (resetn),
+        .tick  (tick441)
+    ); 
+    
+    audio_tick #(.SAMPLE_HZ(20000)) u_tick20 (
+        .clk   (CLK_100MHZ),
+        .rst_n (resetn),
+        .tick  (tick20)
+    ); 
+ // SD CARD ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 
+ logic [15:0] sdPCM;
+ logic sdPCM_valid;
+ 
+sdBox sdBoxTop(
+       .clk(CLK_100MHZ),
+       .reset(!sdcardOn),
+       .audioTick(tick441),
+       
+       .sdPCM(sdPCM),
+       .sdPCM_valid(sdPCM_valid),
+       .ramError(LED[0]),
+       
+       
+       .cs_bo(cs_bo), //SD card pins (also make sure to disable USB CS if using DE10-Lite)
+	   .sclk_o(sclk_o),
+	   .mosi_o(mosi_o),
+	   .miso_i(miso_i)
+    );
+ 
+ 
+    
     
 // DDS ENGINE ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     
@@ -181,7 +243,13 @@ Potentiometer_Control u_pot_control(.clk(CLK_100MHZ),
         .pcm_data     (dds_pcm_out),
         .pcm_valid    (dds_pcm_valid),
         .keyboardSelect (keyboardSelect),
-        .*
+        .drawAddress(),
+        .drawPCM(),
+         .attack_step    (attack_step),    // ? was missing
+         .decay_step     (decay_step),     // ? was missing
+         .sustain_level  (sustain_level),  // ? was missing
+         .sustain_time   (sustain_time),   // ? was missing
+         .release_step   (release_step)
     );
     
     
@@ -189,28 +257,56 @@ Potentiometer_Control u_pot_control(.clk(CLK_100MHZ),
     
     logic PDM_OUT;
     logic signed [15:0] pcm_data;
+    logic pcmValid;
 //    logic signed [15:0] metaStable;
     
 //    always_ff @(posedge CLK_100MHZ) begin
 //        for(integer count = 0; count < 16; count = count + 1)
 //            metaStable[count] = CLK_100MHZ;
 //    end
+    // Only present valid data when SD card actually has a complete word
+    logic sdPCM_ready;
+    assign sdPCM_ready = sdPCM_valid;  // sdPCM_valid = ram_we = high during WRITE state
     
-    always_comb begin
-        pcm_data = dds_pcm_out;
-        if (!systemOn) begin
-            pcm_data = 'h0;
-        end 
-//        else if (SW[9]) begin
-//            pcm_data = dds_pcm_out + metaStable;
-//        end
+    logic [9:0] fftCounter;
+    logic [9:0] fftCounter_next;
+    
+    always_ff @(posedge CLK_100MHZ) begin
+        fftCounter <= fftCounter_next;
+        fftOutAddress <= fftCounter;
     end
     
-    pcm_to_pdm2 #(.PCM_WIDTH(16), .CLK_DIV(8)) u_pdm (
+    always_comb begin
+        pcm_data = '0;
+        pcmValid = 1'b0;
+        fftCounter_next = '0;
+        if (fftSound && !systemOn) begin
+            fftCounter_next = fftCounter;
+            if(tick20)begin
+                pcm_data = fftOutData;
+                fftCounter_next = fftCounter + 1;
+                pcmValid = '1;
+            end
+        end
+        if (!systemOn && sdcardOn) begin
+            if(sdPCM_ready)begin
+                automatic logic signed [31:0] sdproduct;
+                sdproduct = signed'({sdPCM[7:0], sdPCM[15:8]}) * signed'({1'b0, amplitude});
+                pcm_data  = signed'(sdproduct[31:16]);
+                
+                pcmValid  = tick441;
+            end
+        end else if (systemOn) begin
+            pcm_data = dds_pcm_out;
+            pcmValid = dds_pcm_valid;
+        end
+    end
+    
+    pcm_to_pdm2 #(.PCM_WIDTH(16), .CLK_DIV(2)) u_pdm (
         .sys_clk   (CLK_100MHZ),     
         .rst_n     (resetn),    
         .pcm_data  (pcm_data),    // from DDS engine
-        .pcm_valid (dds_pcm_valid),  // from DDS engine sample tick
+        .pcm_valid (pcmValid),  // from DDS engine sample tick
         .pdm_out   (PDM_OUT),       // to XDC-constrained output pin
         .pdm_clk   ()                // unconnected
     );

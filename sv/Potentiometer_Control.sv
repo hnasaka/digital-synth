@@ -55,16 +55,16 @@ module Potentiometer_Control(
             amplitude <= 'h4FF;
             waveformSelect <= '0;
             keyboardSelect <= '1;
-            attack_step <= 32'h00000015;
+            attack_step <= 32'h00000300;
             decay_step <= 32'h0000002B;
             sustain_level <= 32'h59999999;
             sustain_time <= 32'h01C9C380;
             release_step <= 32'h0000012D;
             
         end
-        else if(~systemOn)begin
+        else if(systemOn)begin
             if(BTN[1])begin
-                case (SW)
+                case (SW[12:0])
                     'b1: amplitude <= pot_raw*8;
                     'b10: attack_step <= {20'b0, pot_raw};
                     'b100: decay_step <= {20'b0,pot_raw};
@@ -83,11 +83,10 @@ module Potentiometer_Control(
                     end
                 endcase
             end else if (BTN[2]) begin
-                keyboardSelect <= SW[0]; 
-            end else if (BTN[3]) begin
-                waveformSelect <= SW[1:0];
-            end
+                keyboardSelect <= SW[2];
+                waveformSelect <= SW[1:0]; 
             
+            end
         end
     end
     

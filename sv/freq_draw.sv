@@ -32,7 +32,10 @@ module freq_draw (
     //output logic [8:0]  col_ram [0:511]
     
     input logic [8:0] drawAddress,
-    output logic [8:0] drawPCM
+    output logic [8:0] drawPCM,
+    
+    input logic [8:0] fftReadAddr,
+    output logic [8:0] fftReadData
 );
 
     // -------------------------------------------------------------------------
@@ -56,7 +59,7 @@ module freq_draw (
     logic [8:0] col_ram[0:511];
     
     assign regVal = col_ram[addr];
-    assign drawPCM = col_ram[drawAddress];
+    assign drawPCM = ~col_ram[drawAddress];
 
     always_ff @(posedge clk) begin
         cx_s1 <= CursorX;    cx_s2 <= cx_s1;

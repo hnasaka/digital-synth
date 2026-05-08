@@ -120,7 +120,9 @@ output logic adsr_idle
               end
             launch: begin
                 state_next = attack;
-                amplitude_counter_next = 32'b0;
+                if(state_reg == idle)begin
+                    amplitude_counter_next = 32'b0;
+                end
               end  
             attack: begin
                 if(start) begin
@@ -152,10 +154,10 @@ output logic adsr_idle
                 if (start) begin
                     state_next = launch;
                 end else begin
-                    if(sustain_time_reg < sustain_time) begin
-                        sustain_time_next = sustain_time_next + 1;
-                    end else if (!pressing) begin
+                    if (!pressing) begin
                         state_next = rel;
+                    end else if (sustain_time_reg < sustain_time) begin
+                        sustain_time_next = sustain_time_next + 1;
                     end
                  end
               end              
@@ -174,7 +176,11 @@ output logic adsr_idle
 
     end
     
-    assign adsr_idle = fsm_idle;
+//    assign adsr_idle = fsm_idle;
+    // In always_ff - pulse done for exactly one cycle on transition to idle
+    always_ff @(posedge clk) begin
+        adsr_idle <= (state_reg != idle) && (state_next == idle);
+    end
     
     assign envelope_i = (attack_step_value == BYPASS) ? MAX :
                    (attack_step_value == ZERO) ? 32'b0 :

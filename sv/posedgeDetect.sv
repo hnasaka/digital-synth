@@ -34,9 +34,9 @@ module posedgeDetect #(
     always_ff @(posedge clk)begin
         for(int i = 0; i < voiceNum; i = i + 1) begin
             if (signalBefore[i] == 0 && signal[i] == 1) begin
-                signalPosedge[i] = '1;
+                signalPosedge[i] <= '1;
             end else begin
-                signalPosedge[i] = '0;
+                signalPosedge[i] <= '0;
             end
             signalBefore[i] <= signal[i];
         end  

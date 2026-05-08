@@ -76,7 +76,11 @@ module dds_engine_ip2 (
                     .clearAccum(clearAccum),
                     .keyboardSelect(keyboardSelect),
                     .envelope(adsrEnvelope),
-                    .*
+                    .attack_step(attack_step),
+                    .decay_step(decay_step),
+                    .sustain_level(sustain_level),
+                    .sustain_time(sustain_time),
+                    .release_step(release_step)
                     
     );
    
@@ -112,7 +116,7 @@ module dds_engine_ip2 (
     end
 
     logic signed [15:0] square_raw, saw_raw, noise_raw, draw_raw;
-    assign square_raw = wt_addr_r[9] ? -16'sd32767 : 16'sd32767;
+    assign square_raw = wt_addr_r[9] ? -16'sd24757 : 16'sd24757;
     assign saw_raw    = signed'(16'({wt_addr_r, 6'b0})) - 16'sd32768;
 
     logic [15:0] lfsr;
@@ -123,8 +127,9 @@ module dds_engine_ip2 (
     end
     assign noise_raw = signed'(lfsr);
     
+    //Get Drawn PCM
     assign drawAddress = wt_addr_r[9:1];
-    assign draw_raw = ($signed({1'b0, drawPCM}) - 10'sd256) <<< 7;
+    assign draw_raw = signed'(16'(signed'({1'b0, drawPCM}) - 10'sd240)) <<< 7;
 
     // ?? Waveform mux ?????????????????????????????????????????????????????
     logic signed [15:0] selected_raw;
